@@ -110,29 +110,57 @@ export async function precheckMission(missionId: string): Promise<ActionResult> 
 }
 
 // ============================================================
+// 1.5. START SESSION: 서버 사이드 타이머 시작
+// 유저가 [수행하기] 버튼을 누르면 precheckMission 성공 후 호출
+// 타이머 위변조 방지를 위해 서버에서 시작 시각 기록
+// ============================================================
+export async function startMissionSession(missionId: string): Promise<ActionResult> {
+  try {
+    const supabase = await createServerSupabaseClient();
+
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+
+    if (!authUser) {
+      return { success: false, error: "UNAUTHORIZED", message: "로그인이 필요합니다." };
+    }
+
+    const { data: user } = await supabase
+      .from("users")
+      .select("id")
+      .eq("auth_id", authUser.id)
+      .single();
+
+    if (!user) {
+      return { success: false, error: "USER_NOT_FOUND", message: "유저 정보를 찾을 수 없습니다." };
+    }
+
+    const { error } = await supabase.rpc("start_mission_session", {
+      p_user_id: user.id,
+      p_mission_id: missionId,
+    });
+
+    if (error) {
+      return { success: false, error: "SESSION_FAILED", message: "세션 시작에 실패했습니다." };
+    }
+
+    return { success: true };
+  } catch {
+    return { success: false, error: "UNKNOWN", message: "알 수 없는 오류가 발생했습니다." };
+  }
+}
+
+// ============================================================
 // 2. VERIFY & COMPLETE: 미션 인증 + 원자적 보상 지급
 // 유저가 [인증하기] 버튼을 누르면 호출됨
-// 체류 시간 검증은 클라이언트에서 1차로 한 뒤, 서버에서도 재검증
+// 서버 사이드 세션 테이블로 체류 시간 검증 (클라이언트 타임스탬프 미사용)
 // ============================================================
 export async function verifyAndCompleteMission(
   missionId: string,
-  startedAt: number // 클라이언트에서 보낸 타임스탬프 (Date.now())
+  _startedAt?: number // deprecated: 하위 호환용, 서버 세션으로 대체됨
 ): Promise<ActionResult> {
   try {
-    const MIN_DWELL_TIME_MS = 15_000; // 최소 체류 시간 15초
-
-    // 서버 사이드 체류 시간 검증 (클라이언트 조작 방어)
-    const elapsed = Date.now() - startedAt;
-    if (elapsed < MIN_DWELL_TIME_MS) {
-      // TODO: 빈번한 조기 인증 시도는 어뷰징 의심 → error_logs 기록
-      // await logAbuseAttempt(userId, 'early_verify_attempt', `elapsed: ${elapsed}ms`);
-      return {
-        success: false,
-        error: "TOO_EARLY",
-        message: "미션을 정확히 수행하고 잠시 후 다시 시도해 주세요.",
-      };
-    }
-
     const supabase = await createServerSupabaseClient();
 
     // 인증 확인
@@ -155,7 +183,26 @@ export async function verifyAndCompleteMission(
       return { success: false, error: "USER_NOT_FOUND", message: "유저 정보를 찾을 수 없습니다." };
     }
 
-    // RPC 호출 - 원자적 트랜잭션으로 4개 스텝 실행
+    // 서버 사이드 체류 시간 검증 (클라이언트 타임스탬프가 아닌 DB 세션 기반)
+    const { data: dwellResult, error: dwellError } = await supabase.rpc("verify_mission_dwell_time", {
+      p_user_id: user.id,
+      p_mission_id: missionId,
+    });
+
+    if (dwellError) {
+      return { success: false, error: "DWELL_CHECK_FAILED", message: "체류 시간 검증에 실패했습니다." };
+    }
+
+    const dwellCheck = dwellResult as { success: boolean; error?: string; message?: string };
+    if (!dwellCheck.success) {
+      return {
+        success: false,
+        error: dwellCheck.error ?? "TOO_EARLY",
+        message: dwellCheck.message ?? "미션을 정확히 수행하고 잠시 후 다시 시도해 주세요.",
+      };
+    }
+
+    // RPC 호출 - 원자적 트랜잭션으로 3개 스텝 실행
     const { data, error: rpcError } = await supabase.rpc("complete_mission", {
       p_user_id: user.id,
       p_mission_id: missionId,

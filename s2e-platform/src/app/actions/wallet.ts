@@ -60,13 +60,17 @@ export async function linkWallet(walletAddress: string): Promise<ActionResult> {
       };
     }
 
-    // 지갑 주소 저장
+    // 지갑 주소 저장 (DB UNIQUE 제약조건이 레이스 컨디션 방지)
     const { error: updateError } = await supabase
       .from("users")
       .update({ wallet_address: walletAddress })
       .eq("id", currentUser.id);
 
     if (updateError) {
+      // UNIQUE 제약조건 위반 = 다른 유저가 동시에 같은 주소를 등록
+      if (updateError.code === "23505") {
+        return { success: false, error: "WALLET_IN_USE", message: "이미 다른 계정에 등록된 지갑 주소입니다." };
+      }
       return { success: false, error: "UPDATE_FAILED", message: "지갑 연동에 실패했습니다." };
     }
 

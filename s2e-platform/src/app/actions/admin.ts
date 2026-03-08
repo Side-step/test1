@@ -289,18 +289,20 @@ export async function rejectWithdrawal(
       return { success: false, error: `거절 실패: ${rejectError.message}` };
     }
 
-    // 토큰 환불
-    const { error: refundError } = await supabase.rpc("refund_tokens", {
+    // 토큰 환불 (원자적 INCREMENT via RPC)
+    const { data: refundResult, error: refundError } = await supabase.rpc("refund_tokens", {
       p_user_id: userId,
       p_amount: amount,
     });
 
-    // RPC가 없으면 직접 업데이트
     if (refundError) {
-      await supabase
-        .from("users")
-        .update({ total_tokens: amount }) // supabase doesn't support increment directly
-        .eq("id", userId);
+      // 환불 실패 시 거절도 롤백해야 하지만 MVP에서는 에러 반환
+      return { success: false, error: `토큰 환불 실패: ${refundError.message}. 수동 환불이 필요합니다.` };
+    }
+
+    const refund = refundResult as { success: boolean };
+    if (!refund?.success) {
+      return { success: false, error: "토큰 환불에 실패했습니다. 수동 확인이 필요합니다." };
     }
 
     revalidatePath("/admin/withdrawals");

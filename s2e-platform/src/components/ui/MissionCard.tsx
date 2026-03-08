@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { Mission, MissionStatus, SocialPlatform } from "@/types/database";
-import { precheckMission, verifyAndCompleteMission } from "@/app/actions/mission";
+import { precheckMission, startMissionSession, verifyAndCompleteMission } from "@/app/actions/mission";
 import { useToast } from "./Toast";
 
 // ============================================================
@@ -126,7 +126,9 @@ export default function MissionCard({
         return;
       }
 
-      // Pre-check 통과 → 외부 링크로 이동 (새 탭) + 타이머 시작
+      // Pre-check 통과 → 서버 세션 시작 + 외부 링크로 이동 (새 탭) + 타이머 시작
+      await startMissionSession(mission.id);
+
       const now = Date.now();
       setStartedAt(now);
       setCountdown(MIN_DWELL_SECONDS);
