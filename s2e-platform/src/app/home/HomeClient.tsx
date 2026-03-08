@@ -1,9 +1,11 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import type { User, Mission, MissionStatus } from "@/types/database";
 import MissionCard from "@/components/ui/MissionCard";
 import TrustScoreGauge from "@/components/ui/TrustScoreGauge";
 import BottomNav from "@/components/layout/BottomNav";
+import ToastContainer from "@/components/ui/Toast";
 
 interface HomeClientProps {
   user: User;
@@ -12,10 +14,39 @@ interface HomeClientProps {
 }
 
 export default function HomeClient({
-  user,
-  missions,
-  participationMap,
+  user: initialUser,
+  missions: initialMissions,
+  participationMap: initialParticipationMap,
 }: HomeClientProps) {
+  // 로컬 상태로 관리하여 미션 완료 시 즉시 UI 반영
+  const [user, setUser] = useState(initialUser);
+  const [missions, setMissions] = useState(initialMissions);
+  const [participationMap, setParticipationMap] = useState(initialParticipationMap);
+
+  // 미션 완료 콜백: UI를 즉시 갱신
+  const handleMissionComplete = useCallback(
+    (missionId: string, tokensEarned: number) => {
+      setUser((prev) => ({
+        ...prev,
+        total_tokens: prev.total_tokens + tokensEarned,
+      }));
+
+      setParticipationMap((prev) => ({
+        ...prev,
+        [missionId]: "APPROVED",
+      }));
+
+      setMissions((prev) =>
+        prev.map((m) =>
+          m.id === missionId
+            ? { ...m, current_participants: m.current_participants + 1 }
+            : m
+        )
+      );
+    },
+    []
+  );
+
   const availableMissions = missions.filter(
     (m) => !participationMap[m.id] || participationMap[m.id] === "REJECTED"
   );
@@ -27,6 +58,8 @@ export default function HomeClient({
 
   return (
     <div className="min-h-dvh bg-[#0a0a0f] pb-24">
+      <ToastContainer />
+
       {/* Header */}
       <header className="sticky top-0 z-40 border-b border-[#2a2a40]/50 bg-[#0a0a0f]/95 backdrop-blur-xl">
         <div className="mx-auto flex max-w-lg items-center justify-between px-4 py-3">
@@ -39,16 +72,9 @@ export default function HomeClient({
             <p className="text-[10px] text-[#55556a]">Social-to-Earn</p>
           </div>
           <div className="flex items-center gap-3">
-            {/* Token Balance */}
             <div className="flex items-center gap-1.5 rounded-full border border-[#2a2a40] bg-[#1a1a2e] px-3 py-1.5">
               <div className="flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br from-[#6c5ce7] to-[#a29bfe]">
-                <svg
-                  className="h-3 w-3 text-white"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                >
+                <svg className="h-3 w-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <circle cx="8" cy="8" r="6" />
                   <path d="M18.09 10.37A6 6 0 1 1 10.34 18" />
                 </svg>
@@ -95,13 +121,7 @@ export default function HomeClient({
         {/* Country Badge */}
         {user.country_code && (
           <div className="mt-4 flex items-center gap-2 rounded-xl border border-[#2a2a40]/50 bg-[#1a1a2e]/50 px-4 py-2.5">
-            <svg
-              className="h-4 w-4 text-[#6c5ce7]"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
+            <svg className="h-4 w-4 text-[#6c5ce7]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="10" />
               <line x1="2" y1="12" x2="22" y2="12" />
               <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
@@ -118,13 +138,7 @@ export default function HomeClient({
         {/* VPN Warning */}
         {user.is_vpn && (
           <div className="mt-3 flex items-center gap-2 rounded-xl border border-[#ff4757]/20 bg-[#ff4757]/5 px-4 py-3">
-            <svg
-              className="h-4 w-4 shrink-0 text-[#ff4757]"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
+            <svg className="h-4 w-4 shrink-0 text-[#ff4757]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
               <line x1="12" y1="9" x2="12" y2="13" />
               <line x1="12" y1="17" x2="12.01" y2="17" />
@@ -156,27 +170,18 @@ export default function HomeClient({
                   participationStatus={
                     (participationMap[mission.id] as MissionStatus) ?? null
                   }
+                  onMissionComplete={handleMissionComplete}
                 />
               ))}
             </div>
           ) : (
             <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-[#2a2a40] bg-[#1a1a2e]/30 py-12">
-              <svg
-                className="h-10 w-10 text-[#55556a]"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              >
+              <svg className="h-10 w-10 text-[#55556a]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <circle cx="12" cy="12" r="10" />
                 <path d="M8 15h8M9 9h.01M15 9h.01" />
               </svg>
-              <p className="text-sm text-[#55556a]">
-                No missions available right now
-              </p>
-              <p className="text-xs text-[#55556a]/70">
-                Check back later for new missions
-              </p>
+              <p className="text-sm text-[#55556a]">No missions available right now</p>
+              <p className="text-xs text-[#55556a]/70">Check back later for new missions</p>
             </div>
           )}
         </div>
@@ -185,9 +190,7 @@ export default function HomeClient({
         {activeMissions.length > 0 && (
           <div className="mt-6">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-bold text-[#f0f0f5]">
-                My Missions
-              </h2>
+              <h2 className="text-sm font-bold text-[#f0f0f5]">My Missions</h2>
               <span className="rounded-full bg-[#00d2a0]/10 px-2 py-0.5 text-[10px] font-medium text-[#00d2a0]">
                 {activeMissions.length} in progress
               </span>
@@ -198,16 +201,14 @@ export default function HomeClient({
                   key={mission.id}
                   mission={mission}
                   userTrustScore={user.trust_score}
-                  participationStatus={
-                    participationMap[mission.id] as MissionStatus
-                  }
+                  participationStatus={participationMap[mission.id] as MissionStatus}
+                  onMissionComplete={handleMissionComplete}
                 />
               ))}
             </div>
           </div>
         )}
 
-        {/* Spacer for bottom nav */}
         <div className="h-8" />
       </div>
 

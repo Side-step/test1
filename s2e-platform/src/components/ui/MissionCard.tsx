@@ -1,7 +1,13 @@
 "use client";
 
+import { useState, useEffect, useCallback } from "react";
 import type { Mission, MissionStatus, SocialPlatform } from "@/types/database";
+import { precheckMission, verifyAndCompleteMission } from "@/app/actions/mission";
+import { useToast } from "./Toast";
 
+// ============================================================
+// Platform Icons (재사용)
+// ============================================================
 const platformIcons: Record<SocialPlatform, { icon: React.ReactNode; color: string }> = {
   X: {
     icon: (
@@ -46,37 +52,296 @@ const platformIcons: Record<SocialPlatform, { icon: React.ReactNode; color: stri
   },
 };
 
+// ============================================================
+// Mission Card 상태 관리
+// ============================================================
+type MissionPhase = "idle" | "doing" | "verifying" | "completed";
+
 interface MissionCardProps {
   mission: Mission;
   userTrustScore: number;
   participationStatus?: MissionStatus | null;
+  onMissionComplete?: (missionId: string, tokensEarned: number) => void;
 }
+
+const MIN_DWELL_SECONDS = 15;
 
 export default function MissionCard({
   mission,
   userTrustScore,
   participationStatus,
+  onMissionComplete,
 }: MissionCardProps) {
+  const { showToast } = useToast();
   const isLocked = userTrustScore < mission.min_trust_score;
   const isCompleted = participationStatus === "APPROVED";
   const isPending = participationStatus === "PENDING";
+  const isFull = mission.current_participants >= mission.max_participants;
   const progress =
     mission.max_participants > 0
       ? (mission.current_participants / mission.max_participants) * 100
       : 0;
-  const isFull = mission.current_participants >= mission.max_participants;
 
   const platform = mission.required_platform
     ? platformIcons[mission.required_platform]
     : null;
 
+  // 미션 수행 상태
+  const [phase, setPhase] = useState<MissionPhase>(
+    isCompleted ? "completed" : "idle"
+  );
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [countdown, setCountdown] = useState(MIN_DWELL_SECONDS);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // 카운트다운 타이머
+  useEffect(() => {
+    if (phase !== "doing" || !startedAt) return;
+
+    const interval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      const remaining = Math.max(MIN_DWELL_SECONDS - elapsed, 0);
+      setCountdown(remaining);
+
+      if (remaining === 0) {
+        clearInterval(interval);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [phase, startedAt]);
+
+  // [수행하기] 버튼 핸들러
+  const handleStartMission = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const result = await precheckMission(mission.id);
+
+      if (!result.success) {
+        const toastType =
+          result.error === "TRUST_SCORE_TOO_LOW" || result.error === "SNS_NOT_LINKED"
+            ? "warning"
+            : "error";
+        showToast(result.message ?? "미션을 시작할 수 없습니다.", toastType);
+        return;
+      }
+
+      // Pre-check 통과 → 외부 링크로 이동 (새 탭) + 타이머 시작
+      const now = Date.now();
+      setStartedAt(now);
+      setCountdown(MIN_DWELL_SECONDS);
+      setPhase("doing");
+
+      if (mission.target_url) {
+        window.open(mission.target_url, "_blank", "noopener,noreferrer");
+      }
+    } catch {
+      showToast("알 수 없는 오류가 발생했습니다.", "error");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [mission.id, mission.target_url, showToast]);
+
+  // [인증하기] 버튼 핸들러
+  const handleVerify = useCallback(async () => {
+    if (!startedAt) return;
+
+    // 클라이언트 1차 체류 시간 검증
+    const elapsed = Date.now() - startedAt;
+    if (elapsed < MIN_DWELL_SECONDS * 1000) {
+      showToast("미션을 정확히 수행하고 잠시 후 다시 시도해 주세요.", "warning");
+      return;
+    }
+
+    setIsLoading(true);
+    setPhase("verifying");
+
+    try {
+      const result = await verifyAndCompleteMission(mission.id, startedAt);
+
+      if (!result.success) {
+        setPhase("doing"); // 다시 인증 가능 상태로
+        const toastType = result.error === "TOO_EARLY" ? "warning" : "error";
+        showToast(result.message ?? "인증에 실패했습니다.", toastType);
+        return;
+      }
+
+      // 성공!
+      setPhase("completed");
+      showToast(
+        result.message ?? `미션 완료! +${result.data?.tokens_earned} 토큰 획득!`,
+        "success"
+      );
+
+      if (result.data && onMissionComplete) {
+        onMissionComplete(mission.id, result.data.tokens_earned);
+      }
+    } catch {
+      setPhase("doing");
+      showToast("인증 처리 중 오류가 발생했습니다.", "error");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [startedAt, mission.id, showToast, onMissionComplete]);
+
+  // ============================================================
+  // 버튼 렌더링 로직
+  // ============================================================
+  const renderActionButton = () => {
+    if (isLocked) {
+      return (
+        <div className="flex items-center gap-2 rounded-xl bg-[#2a2a40]/50 px-3 py-2">
+          <svg className="h-4 w-4 text-[#ffc107]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+          <span className="text-xs text-[#ffc107]">
+            Trust Score {mission.min_trust_score}+ required
+          </span>
+        </div>
+      );
+    }
+
+    if (phase === "completed" || isCompleted) {
+      return (
+        <div className="flex items-center gap-2 rounded-xl bg-[#00d2a0]/10 px-3 py-2">
+          <svg className="h-4 w-4 text-[#00d2a0]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+          <span className="text-xs font-medium text-[#00d2a0]">Completed</span>
+        </div>
+      );
+    }
+
+    if (isPending) {
+      return (
+        <div className="flex items-center gap-2 rounded-xl bg-[#ffc107]/10 px-3 py-2">
+          <svg className="h-4 w-4 animate-spin text-[#ffc107]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+          </svg>
+          <span className="text-xs font-medium text-[#ffc107]">Under Review</span>
+        </div>
+      );
+    }
+
+    if (isFull) {
+      return (
+        <div className="flex items-center gap-2 rounded-xl bg-[#ff4757]/10 px-3 py-2">
+          <span className="text-xs font-medium text-[#ff4757]">Fully Participated</span>
+        </div>
+      );
+    }
+
+    // PHASE: idle → "수행하기" 버튼
+    if (phase === "idle") {
+      return (
+        <button
+          onClick={handleStartMission}
+          disabled={isLoading}
+          className="w-full rounded-xl bg-gradient-to-r from-[#6c5ce7] to-[#a29bfe] px-4 py-2.5 text-xs font-semibold text-white transition-all duration-200 hover:shadow-lg hover:shadow-[#6c5ce7]/25 active:scale-[0.98] disabled:opacity-60"
+        >
+          {isLoading ? (
+            <span className="flex items-center justify-center gap-2">
+              <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
+              Checking...
+            </span>
+          ) : (
+            <span className="flex items-center justify-center gap-2">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="5,3 19,12 5,21" />
+              </svg>
+              Do Mission
+            </span>
+          )}
+        </button>
+      );
+    }
+
+    // PHASE: doing → 카운트다운 + "인증하기" 버튼
+    if (phase === "doing") {
+      const canVerify = countdown === 0;
+
+      return (
+        <div className="flex flex-col gap-2">
+          {/* 카운트다운 프로그레스 */}
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#2a2a40]">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-[#ffc107] to-[#00d2a0] transition-all duration-1000"
+                style={{
+                  width: `${((MIN_DWELL_SECONDS - countdown) / MIN_DWELL_SECONDS) * 100}%`,
+                }}
+              />
+            </div>
+            {!canVerify && (
+              <span className="shrink-0 text-xs font-mono text-[#ffc107]">
+                {countdown}s
+              </span>
+            )}
+          </div>
+
+          <button
+            onClick={handleVerify}
+            disabled={!canVerify || isLoading}
+            className={`w-full rounded-xl px-4 py-2.5 text-xs font-semibold transition-all duration-200 active:scale-[0.98] ${
+              canVerify
+                ? "bg-gradient-to-r from-[#00d2a0] to-[#00b894] text-white hover:shadow-lg hover:shadow-[#00d2a0]/25"
+                : "bg-[#2a2a40] text-[#55556a] cursor-not-allowed"
+            }`}
+          >
+            {isLoading ? (
+              <span className="flex items-center justify-center gap-2">
+                <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                </svg>
+                Verifying...
+              </span>
+            ) : canVerify ? (
+              <span className="flex items-center justify-center gap-2">
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M20 6 9 17l-5-5" />
+                </svg>
+                Verify Mission
+              </span>
+            ) : (
+              <span className="flex items-center justify-center gap-2">
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12,6 12,12 16,14" />
+                </svg>
+                Complete the mission first...
+              </span>
+            )}
+          </button>
+        </div>
+      );
+    }
+
+    // PHASE: verifying → 로딩 상태
+    return (
+      <div className="flex items-center justify-center gap-2 rounded-xl bg-[#6c5ce7]/10 px-3 py-2.5">
+        <svg className="h-4 w-4 animate-spin text-[#6c5ce7]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+        </svg>
+        <span className="text-xs font-medium text-[#a29bfe]">Processing...</span>
+      </div>
+    );
+  };
+
+  // ============================================================
+  // Render
+  // ============================================================
   return (
     <div
       className={`relative overflow-hidden rounded-2xl border transition-all duration-200 ${
         isLocked
           ? "border-[#2a2a40]/50 bg-[#1a1a2e]/30 opacity-60"
-          : isCompleted
+          : phase === "completed" || isCompleted
           ? "border-[#00d2a0]/30 bg-[#00d2a0]/5"
+          : phase === "doing"
+          ? "border-[#ffc107]/30 bg-[#ffc107]/5"
           : "border-[#2a2a40] bg-[#1a1a2e] hover:border-[#6c5ce7]/40 hover:bg-[#222240]"
       }`}
     >
@@ -95,6 +360,11 @@ export default function MissionCard({
             <span className="rounded-full bg-[#6c5ce7]/15 px-2.5 py-0.5 text-xs font-medium text-[#a29bfe]">
               {mission.mission_type}
             </span>
+            {phase === "doing" && (
+              <span className="rounded-full bg-[#ffc107]/15 px-2 py-0.5 text-[10px] font-medium text-[#ffc107] animate-pulse">
+                IN PROGRESS
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1 rounded-full bg-[#00d2a0]/10 px-3 py-1">
             <span className="text-sm font-bold text-[#00d2a0]">
@@ -115,7 +385,7 @@ export default function MissionCard({
         )}
 
         {/* Progress bar */}
-        <div className="mb-2">
+        <div className="mb-3">
           <div className="mb-1 flex items-center justify-between">
             <span className="text-[10px] text-[#55556a]">Participants</span>
             <span className="text-[10px] text-[#8888a0]">
@@ -130,67 +400,11 @@ export default function MissionCard({
           </div>
         </div>
 
-        {/* Status / Action */}
-        {isLocked ? (
-          <div className="flex items-center gap-2 rounded-xl bg-[#2a2a40]/50 px-3 py-2">
-            <svg
-              className="h-4 w-4 text-[#ffc107]"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-            </svg>
-            <span className="text-xs text-[#ffc107]">
-              Trust Score {mission.min_trust_score}+ required
-            </span>
-          </div>
-        ) : isCompleted ? (
-          <div className="flex items-center gap-2 rounded-xl bg-[#00d2a0]/10 px-3 py-2">
-            <svg
-              className="h-4 w-4 text-[#00d2a0]"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <path d="M20 6 9 17l-5-5" />
-            </svg>
-            <span className="text-xs font-medium text-[#00d2a0]">Completed</span>
-          </div>
-        ) : isPending ? (
-          <div className="flex items-center gap-2 rounded-xl bg-[#ffc107]/10 px-3 py-2">
-            <svg
-              className="h-4 w-4 animate-spin text-[#ffc107]"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-            </svg>
-            <span className="text-xs font-medium text-[#ffc107]">
-              Under Review
-            </span>
-          </div>
-        ) : isFull ? (
-          <div className="flex items-center gap-2 rounded-xl bg-[#ff4757]/10 px-3 py-2">
-            <span className="text-xs font-medium text-[#ff4757]">
-              Fully Participated
-            </span>
-          </div>
-        ) : (
-          <button className="w-full rounded-xl bg-gradient-to-r from-[#6c5ce7] to-[#a29bfe] px-4 py-2.5 text-xs font-semibold text-white transition-all duration-200 hover:shadow-lg hover:shadow-[#6c5ce7]/25 active:scale-[0.98]">
-            Start Mission
-          </button>
-        )}
+        {/* Action Button */}
+        {renderActionButton()}
       </div>
 
-      {/* Min trust score indicator (subtle) */}
+      {/* Min trust score indicator */}
       {!isLocked && mission.min_trust_score > 0 && (
         <div className="absolute right-3 top-3">
           <span className="text-[9px] text-[#55556a]">
