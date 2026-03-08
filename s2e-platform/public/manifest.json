@@ -1,0 +1,27 @@
+{
+  "name": "S2E - Social to Earn",
+  "short_name": "S2E",
+  "description": "Earn rewards for real social engagement. The anti-sybil Web3 marketing platform.",
+  "start_url": "/home",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["finance", "social"],
+  "lang": "en",
+  "dir": "ltr"
+}
