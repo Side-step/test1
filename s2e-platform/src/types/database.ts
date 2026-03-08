@@ -12,6 +12,8 @@ export type RewardType =
   | "MISSION_COMPLETE"
   | "BONUS";
 
+export type UserStatus = "ACTIVE" | "BANNED";
+
 export interface User {
   id: string;
   auth_id: string;
@@ -24,6 +26,7 @@ export interface User {
   wallet_address: string | null;
   referral_code: string;
   invited_by: string | null;
+  status: UserStatus;
   created_at: string;
   updated_at: string;
 }
