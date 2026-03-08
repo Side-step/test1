@@ -4,6 +4,7 @@ import {
   getUserSocialLinks,
   getReferralStats,
 } from "@/lib/supabase/queries";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 import MyPageClient from "./MyPageClient";
 
 export default async function MyPage() {
@@ -13,9 +14,17 @@ export default async function MyPage() {
     redirect("/");
   }
 
-  const [socialLinks, referralStats] = await Promise.all([
+  const supabase = await createServerSupabaseClient();
+
+  const [socialLinks, referralStats, { data: withdrawals }] = await Promise.all([
     getUserSocialLinks(user.id),
     getReferralStats(user.id),
+    supabase
+      .from("withdrawal_requests")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("requested_at", { ascending: false })
+      .limit(10),
   ]);
 
   // Build a set of linked platforms
@@ -29,6 +38,7 @@ export default async function MyPage() {
       user={user}
       linkedPlatforms={linkedPlatforms}
       referralStats={referralStats}
+      withdrawals={withdrawals ?? []}
     />
   );
 }

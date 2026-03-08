@@ -40,6 +40,16 @@ const navItems = [
       </svg>
     ),
   },
+  {
+    href: "/admin/withdrawals",
+    label: "Withdrawals",
+    icon: (
+      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M12 2v20M17 7l-5-5-5 5" />
+        <rect x="2" y="17" width="20" height="5" rx="1" />
+      </svg>
+    ),
+  },
 ];
 
 export default function AdminShell({ children }: { children: React.ReactNode }) {

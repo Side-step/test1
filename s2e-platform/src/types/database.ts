@@ -13,6 +13,7 @@ export type RewardType =
   | "BONUS";
 
 export type UserStatus = "ACTIVE" | "BANNED";
+export type WithdrawalStatus = "PENDING" | "APPROVED" | "REJECTED" | "COMPLETED";
 
 export interface User {
   id: string;
@@ -83,6 +84,18 @@ export interface RewardsLog {
   created_at: string;
 }
 
+export interface WithdrawalRequest {
+  id: string;
+  user_id: string;
+  wallet_address: string;
+  amount: number;
+  status: WithdrawalStatus;
+  tx_hash: string | null;
+  requested_at: string;
+  processed_at: string | null;
+  admin_note: string | null;
+}
+
 // Supabase Database type for typed client
 export interface Database {
   public: {
@@ -111,6 +124,11 @@ export interface Database {
         Row: RewardsLog;
         Insert: Partial<RewardsLog> & { user_id: string; reward_type: RewardType; amount: number };
         Update: Partial<RewardsLog>;
+      };
+      withdrawal_requests: {
+        Row: WithdrawalRequest;
+        Insert: Partial<WithdrawalRequest> & { user_id: string; wallet_address: string; amount: number };
+        Update: Partial<WithdrawalRequest>;
       };
     };
   };
